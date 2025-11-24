@@ -121,7 +121,14 @@ void DwgRendererItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, 
         m_pDevice->update();
 
         // 4. Image
-        OdRxObjectPtr pRasObj   = m_pDevice->properties()->getAt(OD_T("RasterImage")); // génère Paint Error Code: 5  Desc: "Invalid input"
+        OdRxDictionaryPtr pProps = m_pDevice->properties();
+        if (pProps.isNull() || !pProps->has(OD_T("RasterImage"))) {
+            qWarning() << "RasterImage property not available";
+            return;
+        }
+        OdRxObjectPtr pRasObj = pProps->getAt(OD_T("RasterImage"));
+
+        // OdRxObjectPtr pRasObj   = m_pDevice->properties()->getAt(OD_T("RasterImage")); // génère Paint Error Code: 5  Desc: "Invalid input"
         OdGiRasterImagePtr pRas = OdGiRasterImage::cast(pRasObj);
 
         if(!pRas.isNull()) {
@@ -211,33 +218,45 @@ bool DwgRendererItem::initializeGsDevice(QWidget* viewport)
 
     try {
         OdGsModulePtr pGsModule = odrxDynamicLinker()->loadModule(m_gsDeviceModuleName);
-        if(pGsModule.isNull())
+        if (pGsModule.isNull()) {
+            qWarning() << "Failed to load GS module:" << m_gsDeviceModuleName.c_str();
             return false;
+        }
 
         m_pDevice = pGsModule->createDevice();
-        if(m_pDevice.isNull())
+        if (m_pDevice.isNull()) {
+            qWarning() << "Failed to create device";
             return false;
+        }
 
         OdRxDictionaryPtr pProperties = m_pDevice->properties();
-        if(!pProperties.isNull()) {
-            // Configuration Palette et propriétés pour WinBitmap Offscreen
-            int numColors = 0;
-            m_pDevice->getLogicalPalette(numColors);
-            if(numColors == 0) {
-                m_pDevice->setLogicalPalette(odcmAcadPalette(ODRGB(0, 0, 0)), 256);
-            }
-
-            if(pProperties->has(OD_T("WindowHWND")))
-                pProperties->putAt(OD_T("WindowHWND"), OdRxVariantValue((OdIntPtr) 0));
-            if(pProperties->has(OD_T("WindowHDC")))
-                pProperties->putAt(OD_T("WindowHDC"), OdRxVariantValue((OdIntPtr) 0));
-            if(pProperties->has(OD_T("DoubleBufferEnabled")))
-                pProperties->putAt(OD_T("DoubleBufferEnabled"), OdRxVariantValue(bool(false)));
-            if(pProperties->has(OD_T("BitPerPixel")))
-                pProperties->putAt(OD_T("BitPerPixel"), OdRxVariantValue(OdUInt32(24)));
-
-            m_pDevice->setBackgroundColor(ODRGB(0, 0, 0));
+        if (pProperties.isNull()) {
+            qWarning() << "Device properties are null";
+            return false;
         }
+
+        // Configuration Palette et propriétés pour WinBitmap Offscreen
+        int numColors = 0;
+        m_pDevice->getLogicalPalette(numColors);
+        if(numColors == 0) {
+            m_pDevice->setLogicalPalette(odcmAcadPalette(ODRGB(0, 0, 0)), 256);
+        }
+
+        if (!pProperties->has(OD_T("RasterImage"))) {
+            qWarning() << "Device does not support RasterImage property";
+            return false;
+        }
+
+        if(pProperties->has(OD_T("WindowHWND")))
+            pProperties->putAt(OD_T("WindowHWND"), OdRxVariantValue((OdIntPtr) 0));
+        if(pProperties->has(OD_T("WindowHDC")))
+            pProperties->putAt(OD_T("WindowHDC"), OdRxVariantValue((OdIntPtr) 0));
+        if(pProperties->has(OD_T("DoubleBufferEnabled")))
+            pProperties->putAt(OD_T("DoubleBufferEnabled"), OdRxVariantValue(bool(false)));
+        if(pProperties->has(OD_T("BitPerPixel")))
+            pProperties->putAt(OD_T("BitPerPixel"), OdRxVariantValue(OdUInt32(24)));
+
+        m_pDevice->setBackgroundColor(ODRGB(0, 0, 0));
 
         // Taille initiale
         OdGsDCRect gsRect(0, viewport->width(), 0, viewport->height());

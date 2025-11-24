@@ -5,7 +5,7 @@
 #include "StaticRxObject.h"
 
 // doit être dans le cpp où se trouve odInitialize
-#ifndef _TOOLKIT_IN_DLL_
+
 // Headers requis pour les macros statiques
 #include <RxDynamicModule.h>
 #include <OdModuleNames.h>
@@ -28,7 +28,7 @@ ODRX_DEFINE_STATIC_APPMODULE(OdModelerGeometryModuleName, ModelerModule)
 ODRX_DEFINE_STATIC_APPMODULE(RX_RASTER_SERVICES_APPNAME, ExRasterModule)
 ODRX_DEFINE_STATIC_APPMODULE(OdRasterProcessorModuleName, OdRasterProcessingServicesImpl)
 ODRX_END_STATIC_MODULE_MAP()
-#endif
+
 
 int main(int argc, char *argv[])
 {
