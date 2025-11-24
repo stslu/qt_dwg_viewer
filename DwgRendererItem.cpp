@@ -23,7 +23,7 @@ DwgRendererItem::DwgRendererItem(OdDbDatabasePtr pDb, QGraphicsItem* parent)
     : QGraphicsObject(parent)
     , m_pDb(pDb)
 {
-    m_gsDeviceModuleName = OdWinBitmapModuleName;
+    m_gsDeviceModuleName = OdWinGDIModuleName;
     setAcceptHoverEvents(true);
     setFlag(QGraphicsItem::ItemIsFocusable);
 }
