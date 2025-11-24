@@ -39,10 +39,9 @@ int main(int argc, char *argv[])
 
     // --- Initialisation de Teigha ---
     // avant odInitialize
-#ifndef _TOOLKIT_IN_DLL_
     // Enregistre les modules déclarés plus haut (comme RecomputeDimBlock)
     ODRX_INIT_STATIC_MODULE_MAP();
-#endif
+
     // On utilise OdStaticRxObject pour créer l'objet sur la pile (stack)
     // Cela évite les erreurs "cannot instantiate abstract class"
     OdStaticRxObject<MyServices> services;
