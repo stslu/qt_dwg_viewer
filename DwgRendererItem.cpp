@@ -45,6 +45,7 @@ void DwgRendererItem::ensureExtentsValid() const
                 OdGePoint3d min = extents.minPoint();
                 OdGePoint3d max = extents.maxPoint();
 
+                // Anti-crash: si min/max sont trop proches
                 if (min.distanceTo(max) < 1.0) {
                     min.x -= 50.0; min.y -= 50.0;
                     max.x += 50.0; max.y += 50.0;
@@ -86,18 +87,17 @@ void DwgRendererItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *,
 
     try
     {
+        // 1. Redimensionnement
         OdGsDCRect gsRect(0, widget->width(), 0, widget->height());
         m_pDevice->onSize(gsRect);
 
-        // Vue manuelle (index 0)
+        // 2. Récupération de la vue (créée manuellement dans initializeGsDevice)
         OdGsViewPtr pView = m_pDevice->viewAt(0);
         if (pView.isNull()) return;
 
         if (m_firstResize) {
+            // Mode Filaire 2D Optimisé
             pView->setMode(OdGsView::k2DOptimized);
-
-            // SUPPRESSION DE LA LIGNE FAUTIVE setViewTarget
-            // zoomExtents va tout recalculer correctement juste après
 
             ensureExtentsValid();
             OdGePoint3d min(m_cachedBoundingRect.left(), m_cachedBoundingRect.top(), 0);
@@ -109,8 +109,10 @@ void DwgRendererItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *,
             m_firstResize = false;
         }
 
+        // 3. Rendu
         m_pDevice->update();
 
+        // 4. Image
         OdRxObjectPtr pRasObj = m_pDevice->properties()->getAt(OD_T("RasterImage"));
         OdGiRasterImagePtr pRas = OdGiRasterImage::cast(pRasObj);
 
@@ -167,6 +169,7 @@ bool DwgRendererItem::initializeGsDevice(QWidget* viewport)
         OdRxDictionaryPtr pProperties = m_pDevice->properties();
         if (!pProperties.isNull())
         {
+            // Configuration Palette et propriétés pour WinBitmap Offscreen
             int numColors = 0;
             m_pDevice->getLogicalPalette(numColors);
             if (numColors == 0) {
@@ -176,28 +179,33 @@ bool DwgRendererItem::initializeGsDevice(QWidget* viewport)
             if (pProperties->has(OD_T("WindowHWND"))) pProperties->putAt(OD_T("WindowHWND"), OdRxVariantValue((OdIntPtr)0));
             if (pProperties->has(OD_T("WindowHDC"))) pProperties->putAt(OD_T("WindowHDC"), OdRxVariantValue((OdIntPtr)0));
             if (pProperties->has(OD_T("DoubleBufferEnabled"))) pProperties->putAt(OD_T("DoubleBufferEnabled"), OdRxVariantValue(bool(false)));
-
             if (pProperties->has(OD_T("BitPerPixel"))) pProperties->putAt(OD_T("BitPerPixel"), OdRxVariantValue(OdUInt32(24)));
 
             m_pDevice->setBackgroundColor(ODRGB(0, 0, 0));
         }
 
+        // Taille initiale
         OdGsDCRect gsRect(0, viewport->width(), 0, viewport->height());
         m_pDevice->onSize(gsRect);
 
+        // Contexte
         m_pGiCtx = OdGiContextForDbDatabase::createObject();
         m_pGiCtx->setDatabase(m_pDb);
         m_pGiCtx->enableGsModel(false);
 
-        // --- CONFIGURATION MANUELLE ---
+        // --- CONFIGURATION MANUELLE DE LA VUE (Bypass OdDbGsManager) ---
         OdGsViewPtr pView = m_pDevice->createView();
+
+        // Ajout de la vue au device
         m_pDevice->addView(pView);
 
-        // Correction : On passe 0 (nullptr) pour le modèle GsModel
+        // Ajout de la base de données à la vue
+        // CORRECTION ICI : On passe 0 (ou nullptr) pour le pModel car GsModel est désactivé
         pView->add(m_pDb, 0);
 
         pView->setUserGiContext(m_pGiCtx);
 
+        // On n'utilise plus le helper
         m_pLayoutHelper = nullptr;
 
         m_isDeviceInitialized = true;
