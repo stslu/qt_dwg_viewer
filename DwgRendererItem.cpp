@@ -92,7 +92,8 @@ void DwgRendererItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *,
     try
     {
         // Redimensionnement obligatoire à chaque paint
-        OdGsDCRect gsRect(0, widget->width(), 0, widget->height());
+        // OdGsDCRect expects (xMin, xMax, yMax, yMin) - Y coords are inverted for screen coordinates
+        OdGsDCRect gsRect(0, widget->width(), widget->height(), 0);
         m_pLayoutHelper->onSize(gsRect);
 
         if (m_firstResize) {
@@ -199,7 +200,8 @@ bool DwgRendererItem::initializeGsDevice(QWidget* viewport)
         // --- CRITIQUE : Appeler onSize AVANT setupActiveLayoutViews ---
         // WinBitmap a besoin de connaitre sa taille pour allouer le buffer mémoire
         // Si on ne le fait pas, la création des vues peut échouer ou être incomplète
-        OdGsDCRect gsRect(0, viewport->width(), 0, viewport->height());
+        // OdGsDCRect expects (xMin, xMax, yMax, yMin) - Y coords are inverted for screen coordinates
+        OdGsDCRect gsRect(0, viewport->width(), viewport->height(), 0);
         m_pDevice->onSize(gsRect);
 
         // --- CONTEXTE ---
