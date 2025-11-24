@@ -145,9 +145,9 @@ void DwgRendererItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *,
                     imageCopied = true;
                 } else {
                     // Handle stride mismatch - use temporary buffer
-                    // Check for potential overflow
+                    // Check for potential overflow (ensure buffer size fits in OdUInt32)
                     if (scnLnSize > 0 && height > 0 && 
-                        (OdUInt64)scnLnSize * height <= (OdUInt64)INT_MAX) {
+                        (OdUInt64)scnLnSize * (OdUInt64)height <= (OdUInt64)0xFFFFFFFF) {
                         OdUInt32 teighaBufferSize = scnLnSize * height;
                         
                         // Allocate temporary buffer for Teigha's format
