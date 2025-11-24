@@ -23,7 +23,7 @@ DwgRendererItem::DwgRendererItem(OdDbDatabasePtr pDb, QGraphicsItem* parent)
     : QGraphicsObject(parent)
     , m_pDb(pDb)
 {
-    m_gsDeviceModuleName = OdWinGDIModuleName;
+    m_gsDeviceModuleName = OdWinBitmapModuleName;
     setAcceptHoverEvents(true);
     setFlag(QGraphicsItem::ItemIsFocusable);
 }
@@ -79,113 +79,66 @@ QRectF DwgRendererItem::boundingRect() const
 
 void DwgRendererItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidget* widget)
 {
-    if(m_pDb.isNull())
-        return;
-
-    if(widget->width() < 2 || widget->height() < 2)
-        return;
+    if(m_pDb.isNull()) return;
+    if(widget->width() < 2 || widget->height() < 2) return;
 
     if(!m_isDeviceInitialized) {
         if(!initializeGsDevice(widget))
             return;
     }
 
-    if(m_pDevice.isNull())
-        return;
+    if(m_pDevice.isNull() || m_pLayoutHelper.isNull()) return;
 
     try {
         // 1. Redimensionnement
-        OdGsDCRect gsRect(0, widget->width(), 0, widget->height());
+        OdGsDCRect gsRect(0, widget->width(), widget->height(), 0);
         m_pDevice->onSize(gsRect);
 
-        // 2. Récupération de la vue (créée manuellement dans initializeGsDevice)
-        OdGsViewPtr pView = m_pDevice->viewAt(0);
-        if(pView.isNull())
-            return;
-
         if(m_firstResize) {
-            // Mode Filaire 2D Optimisé
-            pView->setMode(OdGsView::k2DOptimized);
-
-            ensureExtentsValid();
-            OdGePoint3d min(m_cachedBoundingRect.left(), m_cachedBoundingRect.top(), 0);
-            OdGePoint3d max(m_cachedBoundingRect.right(), m_cachedBoundingRect.bottom(), 0);
-
-            pView->zoomExtents(min, max);
-            pView->zoom(0.95);
-
+            // Utiliser le helper pour zoomer
+            m_pLayoutHelper->onSize(gsRect);
             m_firstResize = false;
         }
 
-        // 3. Rendu
+        // 2. Rendu
         m_pDevice->update();
 
-        // 4. Image
+        // TEST : Vérifier les capacités du device
+        qDebug() << "Device class name:" << QString::fromStdWString((const wchar_t*)m_pDevice->isA()->name().c_str());
+
         OdRxDictionaryPtr pProps = m_pDevice->properties();
-        if (pProps.isNull() || !pProps->has(OD_T("RasterImage"))) {
-            qWarning() << "RasterImage property not available";
-            return;
-        }
-        OdRxObjectPtr pRasObj = pProps->getAt(OD_T("RasterImage"));
-
-        // OdRxObjectPtr pRasObj   = m_pDevice->properties()->getAt(OD_T("RasterImage")); // génère Paint Error Code: 5  Desc: "Invalid input"
-        OdGiRasterImagePtr pRas = OdGiRasterImage::cast(pRasObj);
-
-        if(!pRas.isNull()) {
-            int width  = (int) pRas->pixelWidth();
-            int height = (int) pRas->pixelHeight();
-            int bpp    = (int) pRas->colorDepth();
-
-            QImage::Format fmt = QImage::Format_Invalid;
-            if(bpp == 32)
-                fmt = QImage::Format_RGB32;
-            else if(bpp == 24)
-                fmt = QImage::Format_RGB888;
-
-            if(fmt != QImage::Format_Invalid && width > 0 && height > 0) {
-                // Get Teigha's scanline size (may include padding/alignment)
-                OdUInt32 scnLnSize = pRas->scanLineSize();
-                // Convert bits-per-pixel to bytes-per-pixel (round up to nearest byte)
-                OdUInt32 bytesPerPixel = (bpp + 7) / 8;
-                OdUInt32 rowSize       = width * bytesPerPixel;
-
-                // Create QImage
-                QImage img(width, height, fmt);
-                bool imageCopied = false;
-
-                // Check if we can copy directly or need to handle stride differences
-                if(scnLnSize == rowSize && scnLnSize == (OdUInt32) img.bytesPerLine()) {
-                    // Direct copy - strides match
-                    pRas->scanLines(img.bits(), 0, height);
-                    imageCopied = true;
-                } else {
-                    // Handle stride mismatch - use temporary buffer
-                    // Check for potential overflow (ensure buffer size fits in OdUInt32)
-                    if(scnLnSize > 0 && height > 0 && (OdUInt64) scnLnSize * (OdUInt64) height <= (OdUInt64) 0xFFFFFFFF) {
-                        OdUInt32 teighaBufferSize = scnLnSize * height;
-
-                        // Allocate temporary buffer for Teigha's format
-                        QByteArray teighaBuffer(teighaBufferSize, 0);
-                        pRas->scanLines((OdUInt8*) teighaBuffer.data(), 0, height);
-
-                        // Copy line by line to handle stride differences
-                        for(int y = 0; y < height; ++y) {
-                            const OdUInt8* srcLine = (const OdUInt8*) teighaBuffer.data() + y * scnLnSize;
-                            OdUInt8* dstLine       = img.scanLine(y);
-                            memcpy(dstLine, srcLine, rowSize);
-                        }
-
-                        imageCopied = true;
-                    } else {
-                        qWarning() << "Image too large: potential overflow. Size:" << width << "x" << height << "ScanLineSize:" << scnLnSize;
-                    }
-                }
-
-                if(imageCopied) {
-                    painter->drawImage(widget->rect(), img.rgbSwapped());
-                }
+        if (!pProps.isNull()) {
+            qDebug() << "Available properties:";
+            OdRxDictionaryIteratorPtr pIter = pProps->newIterator();
+            for (; !pIter->done(); pIter->next()) {
+                qDebug() << "  -" <<  QString::fromWCharArray((const wchar_t*)pIter->getKey().c_str());
             }
         }
+
+        // 3. Récupération de l'image via les properties du DEVICE (pas update)
+        OdGiRasterImagePtr pRasImg;
+        m_pDevice->getSnapShot(pRasImg, OdGsDCRect(0, widget->width(), widget->height(), 0));
+
+        if(!pRasImg.isNull()) {
+            int width = (int)pRasImg->pixelWidth();
+            int height = (int)pRasImg->pixelHeight();
+            int bpp = (int)pRasImg->colorDepth();
+
+            if(width > 0 && height > 0) {
+                QImage::Format fmt = (bpp == 32) ? QImage::Format_RGB32 : QImage::Format_RGB888;
+                QImage img(width, height, fmt);
+
+                OdUInt32 scnLnSize = pRasImg->scanLineSize();
+
+                for(int y = 0; y < height; ++y) {
+                    const OdUInt8* srcLine = pRasImg->scanLines() + y * scnLnSize;
+                    memcpy(img.scanLine(y), srcLine, img.bytesPerLine());
+                }
+
+                painter->drawImage(widget->rect(), img.rgbSwapped());
+            }
+        }
+
     } catch(const OdError& e) {
         qDebug() << "Paint Error Code:" << e.code() << " Desc:" << QString::fromWCharArray((const wchar_t*) e.description().c_str());
     } catch(...) {
@@ -211,15 +164,13 @@ void DwgRendererItem::wheelEvent(QGraphicsSceneWheelEvent* event)
 
 bool DwgRendererItem::initializeGsDevice(QWidget* viewport)
 {
-    if(m_isDeviceInitialized || m_pDb.isNull())
-        return false;
-    if(!viewport)
-        return false;
+    if(m_isDeviceInitialized || m_pDb.isNull()) return false;
+    if(!viewport) return false;
 
     try {
         OdGsModulePtr pGsModule = odrxDynamicLinker()->loadModule(m_gsDeviceModuleName);
         if (pGsModule.isNull()) {
-            qWarning() << "Failed to load GS module:" << m_gsDeviceModuleName.c_str();
+            qWarning() << "Failed to load GS module";
             return false;
         }
 
@@ -229,62 +180,27 @@ bool DwgRendererItem::initializeGsDevice(QWidget* viewport)
             return false;
         }
 
-        OdRxDictionaryPtr pProperties = m_pDevice->properties();
-        if (pProperties.isNull()) {
-            qWarning() << "Device properties are null";
-            return false;
-        }
-
-        // Configuration Palette et propriétés pour WinBitmap Offscreen
-        int numColors = 0;
-        m_pDevice->getLogicalPalette(numColors);
-        if(numColors == 0) {
-            m_pDevice->setLogicalPalette(odcmAcadPalette(ODRGB(0, 0, 0)), 256);
-        }
-
-        if (!pProperties->has(OD_T("RasterImage"))) {
-            qWarning() << "Device does not support RasterImage property";
-            return false;
-        }
-
-        if(pProperties->has(OD_T("WindowHWND")))
-            pProperties->putAt(OD_T("WindowHWND"), OdRxVariantValue((OdIntPtr) 0));
-        if(pProperties->has(OD_T("WindowHDC")))
-            pProperties->putAt(OD_T("WindowHDC"), OdRxVariantValue((OdIntPtr) 0));
-        if(pProperties->has(OD_T("DoubleBufferEnabled")))
-            pProperties->putAt(OD_T("DoubleBufferEnabled"), OdRxVariantValue(bool(false)));
-        if(pProperties->has(OD_T("BitPerPixel")))
-            pProperties->putAt(OD_T("BitPerPixel"), OdRxVariantValue(OdUInt32(24)));
-
-        m_pDevice->setBackgroundColor(ODRGB(0, 0, 0));
-
-        // Taille initiale
-        OdGsDCRect gsRect(0, viewport->width(), 0, viewport->height());
-        m_pDevice->onSize(gsRect);
+        // IMPORTANT : Pas de configuration de properties AVANT setupActiveLayoutViews !
+        m_pDevice->setBackgroundColor(ODRGB(255, 255, 255));
 
         // Contexte
         m_pGiCtx = OdGiContextForDbDatabase::createObject();
         m_pGiCtx->setDatabase(m_pDb);
-        m_pGiCtx->enableGsModel(false);
 
-        // --- CONFIGURATION MANUELLE DE LA VUE (Bypass OdDbGsManager) ---
-        OdGsViewPtr pView = m_pDevice->createView();
+        // Utiliser le helper qui configure tout automatiquement
+        m_pLayoutHelper = OdDbGsManager::setupActiveLayoutViews(m_pDevice, m_pGiCtx);
 
-        // Ajout de la vue au device
-        m_pDevice->addView(pView);
+        if (m_pLayoutHelper.isNull()) {
+            qWarning() << "Failed to setup layout helper";
+            return false;
+        }
 
-        // CORRECTION: Récupérer le BlockTableRecord du layout actif
-        OdDbBlockTableRecordPtr pBTR = m_pDb->getActiveLayoutBTRId().safeOpenObject();
-        // Ajouter le BTR à la vue (utiliser .get() pour obtenir le pointeur brut)
-        pView->add(pBTR.get(), 0);
-
-        pView->setUserGiContext(m_pGiCtx);
-
-        // On n'utilise plus le helper
-        m_pLayoutHelper = nullptr;
+        // MAINTENANT configurer la taille
+        OdGsDCRect gsRect(0, viewport->width(), viewport->height(), 0);
+        m_pDevice->onSize(gsRect);
 
         m_isDeviceInitialized = true;
-        m_firstResize         = true;
+        m_firstResize = true;
 
     } catch(const OdError& e) {
         qWarning() << "Init GS Error:" << QString::fromWCharArray((const wchar_t*) e.description().c_str());
