@@ -7,6 +7,8 @@
 #include <QOpenGLWidget>
 #include <QGraphicsSceneWheelEvent>
 #include <QDebug>
+#include <QByteArray>
+#include <cstring>
 
 #include "RxDynamicModule.h"
 #include "DbGsManager.h"
@@ -92,8 +94,7 @@ void DwgRendererItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *,
     try
     {
         // Redimensionnement obligatoire à chaque paint
-        // OdGsDCRect expects (xMin, xMax, yMax, yMin) - Y coords are inverted for screen coordinates
-        OdGsDCRect gsRect(0, widget->width(), widget->height(), 0);
+        OdGsDCRect gsRect(0, widget->width(), 0, widget->height());
         m_pLayoutHelper->onSize(gsRect);
 
         if (m_firstResize) {
@@ -127,8 +128,25 @@ void DwgRendererItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *,
             else if (bpp == 24) fmt = QImage::Format_RGB888;
 
             if (fmt != QImage::Format_Invalid && width > 0 && height > 0) {
+                // Get Teigha's scanline size (may include padding/alignment)
+                OdUInt32 scnLnSize = pRas->scanLineSize();
+                OdUInt32 teighaBufferSize = scnLnSize * height;
+                
+                // Allocate temporary buffer for Teigha's format
+                QByteArray teighaBuffer(teighaBufferSize, 0);
+                pRas->scanLines((OdUInt8*)teighaBuffer.data(), 0, height);
+                
+                // Create QImage and copy line by line to handle stride differences
                 QImage img(width, height, fmt);
-                pRas->scanLines(img.bits(), 0, height);
+                OdUInt32 bytesPerPixel = (bpp + 7) / 8;
+                OdUInt32 rowSize = width * bytesPerPixel;
+                
+                for (int y = 0; y < height; ++y) {
+                    const OdUInt8* srcLine = (const OdUInt8*)teighaBuffer.data() + y * scnLnSize;
+                    OdUInt8* dstLine = img.scanLine(y);
+                    memcpy(dstLine, srcLine, rowSize);
+                }
+                
                 painter->drawImage(widget->rect(), img.rgbSwapped());
             }
         }
@@ -200,8 +218,7 @@ bool DwgRendererItem::initializeGsDevice(QWidget* viewport)
         // --- CRITIQUE : Appeler onSize AVANT setupActiveLayoutViews ---
         // WinBitmap a besoin de connaitre sa taille pour allouer le buffer mémoire
         // Si on ne le fait pas, la création des vues peut échouer ou être incomplète
-        // OdGsDCRect expects (xMin, xMax, yMax, yMin) - Y coords are inverted for screen coordinates
-        OdGsDCRect gsRect(0, viewport->width(), viewport->height(), 0);
+        OdGsDCRect gsRect(0, viewport->width(), 0, viewport->height());
         m_pDevice->onSize(gsRect);
 
         // --- CONTEXTE ---
