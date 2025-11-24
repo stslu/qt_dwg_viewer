@@ -130,16 +130,19 @@ void DwgRendererItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *,
             if (fmt != QImage::Format_Invalid && width > 0 && height > 0) {
                 // Get Teigha's scanline size (may include padding/alignment)
                 OdUInt32 scnLnSize = pRas->scanLineSize();
+                // Convert bits-per-pixel to bytes-per-pixel (round up to nearest byte)
                 OdUInt32 bytesPerPixel = (bpp + 7) / 8;
                 OdUInt32 rowSize = width * bytesPerPixel;
                 
                 // Create QImage
                 QImage img(width, height, fmt);
+                bool imageCopied = false;
                 
                 // Check if we can copy directly or need to handle stride differences
                 if (scnLnSize == rowSize && scnLnSize == (OdUInt32)img.bytesPerLine()) {
                     // Direct copy - strides match
                     pRas->scanLines(img.bits(), 0, height);
+                    imageCopied = true;
                 } else {
                     // Handle stride mismatch - use temporary buffer
                     // Check for potential overflow
@@ -157,10 +160,16 @@ void DwgRendererItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *,
                             OdUInt8* dstLine = img.scanLine(y);
                             memcpy(dstLine, srcLine, rowSize);
                         }
+                        imageCopied = true;
+                    } else {
+                        qWarning() << "Image too large: potential overflow. Size:" << width << "x" << height 
+                                   << "ScanLineSize:" << scnLnSize;
                     }
                 }
                 
-                painter->drawImage(widget->rect(), img.rgbSwapped());
+                if (imageCopied) {
+                    painter->drawImage(widget->rect(), img.rgbSwapped());
+                }
             }
         }
     }
