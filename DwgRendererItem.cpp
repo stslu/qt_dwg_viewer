@@ -130,21 +130,34 @@ void DwgRendererItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *,
             if (fmt != QImage::Format_Invalid && width > 0 && height > 0) {
                 // Get Teigha's scanline size (may include padding/alignment)
                 OdUInt32 scnLnSize = pRas->scanLineSize();
-                OdUInt32 teighaBufferSize = scnLnSize * height;
-                
-                // Allocate temporary buffer for Teigha's format
-                QByteArray teighaBuffer(teighaBufferSize, 0);
-                pRas->scanLines((OdUInt8*)teighaBuffer.data(), 0, height);
-                
-                // Create QImage and copy line by line to handle stride differences
-                QImage img(width, height, fmt);
                 OdUInt32 bytesPerPixel = (bpp + 7) / 8;
                 OdUInt32 rowSize = width * bytesPerPixel;
                 
-                for (int y = 0; y < height; ++y) {
-                    const OdUInt8* srcLine = (const OdUInt8*)teighaBuffer.data() + y * scnLnSize;
-                    OdUInt8* dstLine = img.scanLine(y);
-                    memcpy(dstLine, srcLine, rowSize);
+                // Create QImage
+                QImage img(width, height, fmt);
+                
+                // Check if we can copy directly or need to handle stride differences
+                if (scnLnSize == rowSize && scnLnSize == (OdUInt32)img.bytesPerLine()) {
+                    // Direct copy - strides match
+                    pRas->scanLines(img.bits(), 0, height);
+                } else {
+                    // Handle stride mismatch - use temporary buffer
+                    // Check for potential overflow
+                    if (scnLnSize > 0 && height > 0 && 
+                        (OdUInt64)scnLnSize * height <= (OdUInt64)INT_MAX) {
+                        OdUInt32 teighaBufferSize = scnLnSize * height;
+                        
+                        // Allocate temporary buffer for Teigha's format
+                        QByteArray teighaBuffer(teighaBufferSize, 0);
+                        pRas->scanLines((OdUInt8*)teighaBuffer.data(), 0, height);
+                        
+                        // Copy line by line to handle stride differences
+                        for (int y = 0; y < height; ++y) {
+                            const OdUInt8* srcLine = (const OdUInt8*)teighaBuffer.data() + y * scnLnSize;
+                            OdUInt8* dstLine = img.scanLine(y);
+                            memcpy(dstLine, srcLine, rowSize);
+                        }
+                    }
                 }
                 
                 painter->drawImage(widget->rect(), img.rgbSwapped());
