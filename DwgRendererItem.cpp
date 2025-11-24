@@ -88,7 +88,8 @@ void DwgRendererItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *,
     try
     {
         // 1. Redimensionnement
-        OdGsDCRect gsRect(0, widget->width(), 0, widget->height());
+        // OdGsDCRect gsRect(0, widget->width(), 0, widget->height());
+        OdGsDCRect gsRect(0, widget->width(), widget->height(), 0);
         m_pDevice->onSize(gsRect);
 
         // 2. Récupération de la vue (créée manuellement dans initializeGsDevice)
@@ -185,7 +186,8 @@ bool DwgRendererItem::initializeGsDevice(QWidget* viewport)
         }
 
         // Taille initiale
-        OdGsDCRect gsRect(0, viewport->width(), 0, viewport->height());
+        // OdGsDCRect gsRect(0, viewport->width(), 0, viewport->height());
+        OdGsDCRect gsRect(0, viewport->width(), viewport->height(), 0);
         m_pDevice->onSize(gsRect);
 
         // Contexte
