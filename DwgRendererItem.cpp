@@ -90,8 +90,7 @@ void DwgRendererItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *,
     try
     {
         // 1. Redimensionnement
-        // OdGsDCRect gsRect(0, widget->width(), 0, widget->height());
-        OdGsDCRect gsRect(0, widget->width(), widget->height(), 0);
+        OdGsDCRect gsRect(0, widget->width(), 0, widget->height());
         m_pDevice->onSize(gsRect);
 
         // 2. Récupération de la vue (créée manuellement dans initializeGsDevice)
@@ -129,9 +128,48 @@ void DwgRendererItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *,
             else if (bpp == 24) fmt = QImage::Format_RGB888;
 
             if (fmt != QImage::Format_Invalid && width > 0 && height > 0) {
+                // Get Teigha's scanline size (may include padding/alignment)
+                OdUInt32 scnLnSize = pRas->scanLineSize();
+                // Convert bits-per-pixel to bytes-per-pixel (round up to nearest byte)
+                OdUInt32 bytesPerPixel = (bpp + 7) / 8;
+                OdUInt32 rowSize = width * bytesPerPixel;
+
+                // Create QImage
                 QImage img(width, height, fmt);
-                pRas->scanLines(img.bits(), 0, height);
-                painter->drawImage(widget->rect(), img.rgbSwapped());
+                bool imageCopied = false;
+
+                // Check if we can copy directly or need to handle stride differences
+                if (scnLnSize == rowSize && scnLnSize == (OdUInt32)img.bytesPerLine()) {
+                    // Direct copy - strides match
+                    pRas->scanLines(img.bits(), 0, height);
+                    imageCopied = true;
+                } else {
+                    // Handle stride mismatch - use temporary buffer
+                    // Check for potential overflow (ensure buffer size fits in OdUInt32)
+                    if (scnLnSize > 0 && height > 0 &&
+                       (OdUInt64)scnLnSize * (OdUInt64)height <= (OdUInt64)0xFFFFFFFF) {
+                        OdUInt32 teighaBufferSize = scnLnSize * height;
+
+                        // Allocate temporary buffer for Teigha's format
+                        QByteArray teighaBuffer(teighaBufferSize, 0);
+                        pRas->scanLines((OdUInt8*)teighaBuffer.data(), 0, height);
+
+                        // Copy line by line to handle stride differences
+                        for (int y = 0; y < height; ++y) {
+                            const OdUInt8* srcLine = (const OdUInt8*)teighaBuffer.data() + y * scnLnSize;
+                            OdUInt8* dstLine = img.scanLine(y);
+                            memcpy(dstLine, srcLine, rowSize);
+                        }
+                        imageCopied = true;
+                    } else {
+                        qWarning() << "Image too large: potential overflow. Size:" << width << "x" << height
+                                   << "ScanLineSize:" << scnLnSize;
+                    }
+                }
+
+                if (imageCopied) {
+                    painter->drawImage(widget->rect(), img.rgbSwapped());
+                }
             }
         }
     }
@@ -188,8 +226,7 @@ bool DwgRendererItem::initializeGsDevice(QWidget* viewport)
         }
 
         // Taille initiale
-        // OdGsDCRect gsRect(0, viewport->width(), 0, viewport->height());
-        OdGsDCRect gsRect(0, viewport->width(), viewport->height(), 0);
+        OdGsDCRect gsRect(0, viewport->width(), 0, viewport->height());
         m_pDevice->onSize(gsRect);
 
         // Contexte
