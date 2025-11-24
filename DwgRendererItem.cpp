@@ -7,6 +7,8 @@
 #include <QOpenGLWidget>
 #include <QGraphicsSceneWheelEvent>
 #include <QDebug>
+#include <QByteArray>
+#include <cstring>
 
 #include "RxDynamicModule.h"
 #include "DbGsManager.h"
