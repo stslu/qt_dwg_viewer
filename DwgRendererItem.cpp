@@ -53,7 +53,6 @@ void DwgRendererItem::ensureExtentsValid() const
                 double w = max.x - min.x;
                 double h = max.y - min.y;
 
-                // Limite raisonnable
                 double limit = 10000000.0;
                 if (w > limit || h > limit || qAbs(min.x) > limit || qAbs(min.y) > limit) {
                     m_cachedBoundingRect = QRectF(-limit/2, -limit/2, limit, limit);
@@ -77,41 +76,40 @@ void DwgRendererItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *,
 {
     if (m_pDb.isNull()) return;
 
-    // --- PROTECTION CRITIQUE ---
-    // On ne tente PAS d'initialiser si le widget est trop petit (ex: minimisé ou en création)
-    // C'est une cause fréquente de Code 5 (Invalid Input) car WinBitmap refuse les rects (0,0)
     if (widget->width() < 2 || widget->height() < 2) return;
 
     if (!m_isDeviceInitialized) {
-        // On passe le widget pour récupérer sa taille dès l'init
         if (!initializeGsDevice(widget)) return;
     }
 
-    if (m_pLayoutHelper.isNull() || m_pDevice.isNull()) return;
+    if (m_pDevice.isNull()) return;
 
     try
     {
-        // Redimensionnement obligatoire à chaque paint
         OdGsDCRect gsRect(0, widget->width(), 0, widget->height());
-        m_pLayoutHelper->onSize(gsRect);
+        m_pDevice->onSize(gsRect);
+
+        // Vue manuelle (index 0)
+        OdGsViewPtr pView = m_pDevice->viewAt(0);
+        if (pView.isNull()) return;
 
         if (m_firstResize) {
-            OdGsView* pView = m_pLayoutHelper->activeView();
-            if (pView) {
-                pView->setMode(OdGsView::k2DOptimized);
+            pView->setMode(OdGsView::k2DOptimized);
 
-                ensureExtentsValid();
-                OdGePoint3d min(m_cachedBoundingRect.left(), m_cachedBoundingRect.top(), 0);
-                OdGePoint3d max(m_cachedBoundingRect.right(), m_cachedBoundingRect.bottom(), 0);
+            // SUPPRESSION DE LA LIGNE FAUTIVE setViewTarget
+            // zoomExtents va tout recalculer correctement juste après
 
-                pView->zoomExtents(min, max);
-                pView->zoom(0.95);
-            }
+            ensureExtentsValid();
+            OdGePoint3d min(m_cachedBoundingRect.left(), m_cachedBoundingRect.top(), 0);
+            OdGePoint3d max(m_cachedBoundingRect.right(), m_cachedBoundingRect.bottom(), 0);
+
+            pView->zoomExtents(min, max);
+            pView->zoom(0.95);
+
             m_firstResize = false;
         }
 
-        // Si ça plante ici, c'est que le contexte ou le device est corrompu
-        m_pLayoutHelper->update();
+        m_pDevice->update();
 
         OdRxObjectPtr pRasObj = m_pDevice->properties()->getAt(OD_T("RasterImage"));
         OdGiRasterImagePtr pRas = OdGiRasterImage::cast(pRasObj);
@@ -142,9 +140,11 @@ void DwgRendererItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *,
 
 void DwgRendererItem::wheelEvent(QGraphicsSceneWheelEvent *event)
 {
-    if (m_pLayoutHelper.isNull() || !m_pLayoutHelper->activeView()) return;
+    if (m_pDevice.isNull()) return;
 
-    OdGsView* pView = m_pLayoutHelper->activeView();
+    OdGsViewPtr pView = m_pDevice->viewAt(0);
+    if (pView.isNull()) return;
+
     double scaleFactor = (event->delta() > 0) ? 1.0 / 1.1 : 1.1;
     pView->zoom(scaleFactor);
 
@@ -167,50 +167,38 @@ bool DwgRendererItem::initializeGsDevice(QWidget* viewport)
         OdRxDictionaryPtr pProperties = m_pDevice->properties();
         if (!pProperties.isNull())
         {
-            // --- CONFIGURATION ---
-            // 1. Palette
             int numColors = 0;
             m_pDevice->getLogicalPalette(numColors);
             if (numColors == 0) {
                 m_pDevice->setLogicalPalette(odcmAcadPalette(ODRGB(0,0,0)), 256);
             }
 
-            // 2. Mode Offscreen strict
-            if (pProperties->has(OD_T("WindowHWND"))) {
-                pProperties->putAt(OD_T("WindowHWND"), OdRxVariantValue((OdIntPtr)0));
-            }
-            if (pProperties->has(OD_T("WindowHDC"))) {
-                pProperties->putAt(OD_T("WindowHDC"), OdRxVariantValue((OdIntPtr)0));
-            }
+            if (pProperties->has(OD_T("WindowHWND"))) pProperties->putAt(OD_T("WindowHWND"), OdRxVariantValue((OdIntPtr)0));
+            if (pProperties->has(OD_T("WindowHDC"))) pProperties->putAt(OD_T("WindowHDC"), OdRxVariantValue((OdIntPtr)0));
+            if (pProperties->has(OD_T("DoubleBufferEnabled"))) pProperties->putAt(OD_T("DoubleBufferEnabled"), OdRxVariantValue(bool(false)));
 
-            // 3. 24 bits
-            if (pProperties->has(OD_T("BitPerPixel"))) {
-                pProperties->putAt(OD_T("BitPerPixel"), OdRxVariantValue(OdUInt32(24)));
-            }
-
-            // 4. Double Buffer OFF
-            if (pProperties->has(OD_T("DoubleBufferEnabled"))) {
-                pProperties->putAt(OD_T("DoubleBufferEnabled"), OdRxVariantValue(bool(false)));
-            }
+            if (pProperties->has(OD_T("BitPerPixel"))) pProperties->putAt(OD_T("BitPerPixel"), OdRxVariantValue(OdUInt32(24)));
 
             m_pDevice->setBackgroundColor(ODRGB(0, 0, 0));
         }
 
-        // --- CRITIQUE : Appeler onSize AVANT setupActiveLayoutViews ---
-        // WinBitmap a besoin de connaitre sa taille pour allouer le buffer mémoire
-        // Si on ne le fait pas, la création des vues peut échouer ou être incomplète
         OdGsDCRect gsRect(0, viewport->width(), 0, viewport->height());
         m_pDevice->onSize(gsRect);
 
-        // --- CONTEXTE ---
         m_pGiCtx = OdGiContextForDbDatabase::createObject();
         m_pGiCtx->setDatabase(m_pDb);
-        m_pGiCtx->enableGsModel(false); // Désactivé pour WinBitmap
+        m_pGiCtx->enableGsModel(false);
 
-        // --- LAYOUT ---
-        m_pLayoutHelper = OdDbGsManager::setupActiveLayoutViews(m_pDevice, m_pGiCtx);
+        // --- CONFIGURATION MANUELLE ---
+        OdGsViewPtr pView = m_pDevice->createView();
+        m_pDevice->addView(pView);
 
-        if (m_pLayoutHelper.isNull()) return false;
+        // Correction : On passe 0 (nullptr) pour le modèle GsModel
+        pView->add(m_pDb, 0);
+
+        pView->setUserGiContext(m_pGiCtx);
+
+        m_pLayoutHelper = nullptr;
 
         m_isDeviceInitialized = true;
         m_firstResize = true;
@@ -225,6 +213,11 @@ bool DwgRendererItem::initializeGsDevice(QWidget* viewport)
 void DwgRendererItem::destroyGsDevice()
 {
     if (!m_isDeviceInitialized) return;
+
+    if (!m_pDevice.isNull()) {
+        m_pDevice->eraseAllViews();
+    }
+
     m_pLayoutHelper.release();
     m_pDevice.release();
     m_pGiCtx.release();
