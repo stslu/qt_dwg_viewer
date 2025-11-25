@@ -48,6 +48,18 @@ private:
     mutable bool m_bExtentsCalculated = false;
 
     OdString m_gsDeviceModuleName;
+
+    // Windows only
+    HWND m_hOffscreenWnd = nullptr;
+    HDC m_hOffscreenDC = nullptr;
+    HBITMAP m_hBitmap = nullptr;
+    HBITMAP m_hOldBitmap = nullptr;
+    void* m_pBits = nullptr;
+    int m_bitmapWidth = 0;
+    int m_bitmapHeight = 0;
+
+    bool createOffscreenWindow(int width, int height);
+    void destroyOffscreenWindow();
 };
 
 #endif // DWGRENDERERITEM_H

@@ -19,6 +19,9 @@
 #include "RxDynamicModule.h"
 #include "RxVariantValue.h"
 
+// Windows only
+#include <windows.h>
+
 DwgRendererItem::DwgRendererItem(OdDbDatabasePtr pDb, QGraphicsItem* parent)
     : QGraphicsObject(parent)
     , m_pDb(pDb)
@@ -79,6 +82,7 @@ QRectF DwgRendererItem::boundingRect() const
 
 void DwgRendererItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidget* widget)
 {
+    //WINDOWS ONLY
     if(m_pDb.isNull()) return;
     if(widget->width() < 2 || widget->height() < 2) return;
 
@@ -87,60 +91,37 @@ void DwgRendererItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, 
             return;
     }
 
-    if(m_pDevice.isNull() || m_pLayoutHelper.isNull()) return;
+    if(m_pDevice.isNull()) return;
 
     try {
-        // 1. Redimensionnement
+        // Redimensionner la fenêtre offscreen si nécessaire
+        if (!createOffscreenWindow(widget->width(), widget->height())) return;
+
+        // Mettre à jour la taille du device
         OdGsDCRect gsRect(0, widget->width(), widget->height(), 0);
         m_pDevice->onSize(gsRect);
 
-        if(m_firstResize) {
-            // Utiliser le helper pour zoomer
+        if(m_firstResize && !m_pLayoutHelper.isNull()) {
             m_pLayoutHelper->onSize(gsRect);
             m_firstResize = false;
         }
 
-        // 2. Rendu
+        // Rendu
+        qDebug().noquote() << "-----1";
         m_pDevice->update();
+        qDebug().noquote() << "-----2";
 
-        // TEST : Vérifier les capacités du device
-        qDebug() << "Device class name:" << QString::fromStdWString((const wchar_t*)m_pDevice->isA()->name().c_str());
-
-        OdRxDictionaryPtr pProps = m_pDevice->properties();
-        if (!pProps.isNull()) {
-            qDebug() << "Available properties:";
-            OdRxDictionaryIteratorPtr pIter = pProps->newIterator();
-            for (; !pIter->done(); pIter->next()) {
-                qDebug() << "  -" <<  QString::fromWCharArray((const wchar_t*)pIter->getKey().c_str());
-            }
-        }
-
-        // 3. Récupération de l'image via les properties du DEVICE (pas update)
-        OdGiRasterImagePtr pRasImg;
-        m_pDevice->getSnapShot(pRasImg, OdGsDCRect(0, widget->width(), widget->height(), 0));
-
-        if(!pRasImg.isNull()) {
-            int width = (int)pRasImg->pixelWidth();
-            int height = (int)pRasImg->pixelHeight();
-            int bpp = (int)pRasImg->colorDepth();
-
-            if(width > 0 && height > 0) {
-                QImage::Format fmt = (bpp == 32) ? QImage::Format_RGB32 : QImage::Format_RGB888;
-                QImage img(width, height, fmt);
-
-                OdUInt32 scnLnSize = pRasImg->scanLineSize();
-
-                for(int y = 0; y < height; ++y) {
-                    const OdUInt8* srcLine = pRasImg->scanLines() + y * scnLnSize;
-                    memcpy(img.scanLine(y), srcLine, img.bytesPerLine());
-                }
-
-                painter->drawImage(widget->rect(), img.rgbSwapped());
-            }
+        // Copier le DIB vers QImage
+        if (m_pBits) {
+            int stride = ((m_bitmapWidth * 3 + 3) & ~3);
+            QImage img((uchar*)m_pBits, m_bitmapWidth, m_bitmapHeight,
+                       stride, QImage::Format_RGB888);
+            painter->drawImage(widget->rect(), img.rgbSwapped());
         }
 
     } catch(const OdError& e) {
-        qDebug() << "Paint Error Code:" << e.code() << " Desc:" << QString::fromWCharArray((const wchar_t*) e.description().c_str());
+        qDebug() << "Paint Error Code:" << e.code()
+        << " Desc:" << QString::fromStdWString((const wchar_t*)e.description().c_str());
     } catch(...) {
         qDebug() << "Unknown Paint Error";
     }
@@ -164,38 +145,37 @@ void DwgRendererItem::wheelEvent(QGraphicsSceneWheelEvent* event)
 
 bool DwgRendererItem::initializeGsDevice(QWidget* viewport)
 {
+    //WINDOWS ONLY
     if(m_isDeviceInitialized || m_pDb.isNull()) return false;
     if(!viewport) return false;
 
     try {
-        OdGsModulePtr pGsModule = odrxDynamicLinker()->loadModule(m_gsDeviceModuleName);
-        if (pGsModule.isNull()) {
-            qWarning() << "Failed to load GS module";
+        // Créer la fenêtre offscreen
+        if (!createOffscreenWindow(viewport->width(), viewport->height())) {
             return false;
         }
+
+        OdGsModulePtr pGsModule = odrxDynamicLinker()->loadModule(OdWinGDIModuleName);
+        if (pGsModule.isNull()) return false;
 
         m_pDevice = pGsModule->createDevice();
-        if (m_pDevice.isNull()) {
-            qWarning() << "Failed to create device";
-            return false;
+        if (m_pDevice.isNull()) return false;
+
+        OdRxDictionaryPtr pProps = m_pDevice->properties();
+        if (!pProps.isNull()) {
+            pProps->putAt(OD_T("WindowHWND"), OdRxVariantValue((OdIntPtr)m_hOffscreenWnd));
+            pProps->putAt(OD_T("WindowHDC"), OdRxVariantValue((OdIntPtr)m_hOffscreenDC));
         }
 
-        // IMPORTANT : Pas de configuration de properties AVANT setupActiveLayoutViews !
         m_pDevice->setBackgroundColor(ODRGB(255, 255, 255));
 
-        // Contexte
         m_pGiCtx = OdGiContextForDbDatabase::createObject();
         m_pGiCtx->setDatabase(m_pDb);
 
-        // Utiliser le helper qui configure tout automatiquement
         m_pLayoutHelper = OdDbGsManager::setupActiveLayoutViews(m_pDevice, m_pGiCtx);
 
-        if (m_pLayoutHelper.isNull()) {
-            qWarning() << "Failed to setup layout helper";
-            return false;
-        }
+        if (m_pLayoutHelper.isNull()) return false;
 
-        // MAINTENANT configurer la taille
         OdGsDCRect gsRect(0, viewport->width(), viewport->height(), 0);
         m_pDevice->onSize(gsRect);
 
@@ -203,23 +183,100 @@ bool DwgRendererItem::initializeGsDevice(QWidget* viewport)
         m_firstResize = true;
 
     } catch(const OdError& e) {
-        qWarning() << "Init GS Error:" << QString::fromWCharArray((const wchar_t*) e.description().c_str());
+        qWarning() << "Init GS Error:" << QString::fromStdWString((const wchar_t*)e.description().c_str());
         return false;
     }
     return true;
+
 }
 
 void DwgRendererItem::destroyGsDevice()
 {
-    if(!m_isDeviceInitialized)
-        return;
+    //WINDOWS ONLY
+    destroyGsDevice();
+    destroyOffscreenWindow();
+}
 
-    if(!m_pDevice.isNull()) {
-        m_pDevice->eraseAllViews();
+
+
+//------------------------WINDOWS ONLY
+bool DwgRendererItem::createOffscreenWindow(int width, int height)
+{
+    if (m_hOffscreenWnd && m_bitmapWidth == width && m_bitmapHeight == height) {
+        return true;
     }
 
-    m_pLayoutHelper.release();
-    m_pDevice.release();
-    m_pGiCtx.release();
-    m_isDeviceInitialized = false;
+    destroyOffscreenWindow();
+
+    // Créer une fenêtre invisible
+    m_hOffscreenWnd = CreateWindowExW(
+        0, L"STATIC", L"TeighaOffscreen",
+        WS_POPUP,
+        0, 0, width, height,
+        nullptr, nullptr, GetModuleHandle(nullptr), nullptr
+        );
+
+    if (!m_hOffscreenWnd) {
+        qWarning() << "Failed to create offscreen window";
+        return false;
+    }
+
+    m_hOffscreenDC = GetDC(m_hOffscreenWnd);
+    if (!m_hOffscreenDC) {
+        DestroyWindow(m_hOffscreenWnd);
+        m_hOffscreenWnd = nullptr;
+        return false;
+    }
+
+    // Créer le DIB
+    BITMAPINFO bmi;
+    ZeroMemory(&bmi, sizeof(BITMAPINFO));
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = width;
+    bmi.bmiHeader.biHeight = -height;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 24;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    m_hBitmap = CreateDIBSection(m_hOffscreenDC, &bmi, DIB_RGB_COLORS, &m_pBits, nullptr, 0);
+    if (!m_hBitmap) {
+        qWarning() << "Failed to create DIB section";
+        ReleaseDC(m_hOffscreenWnd, m_hOffscreenDC);
+        DestroyWindow(m_hOffscreenWnd);
+        m_hOffscreenWnd = nullptr;
+        m_hOffscreenDC = nullptr;
+        return false;
+    }
+
+    m_hOldBitmap = (HBITMAP)SelectObject(m_hOffscreenDC, m_hBitmap);
+    m_bitmapWidth = width;
+    m_bitmapHeight = height;
+
+    return true;
+}
+
+void DwgRendererItem::destroyOffscreenWindow()
+{
+    if (m_hBitmap) {
+        if (m_hOffscreenDC && m_hOldBitmap) {
+            SelectObject(m_hOffscreenDC, m_hOldBitmap);
+        }
+        DeleteObject(m_hBitmap);
+        m_hBitmap = nullptr;
+        m_hOldBitmap = nullptr;
+    }
+
+    if (m_hOffscreenDC) {
+        ReleaseDC(m_hOffscreenWnd, m_hOffscreenDC);
+        m_hOffscreenDC = nullptr;
+    }
+
+    if (m_hOffscreenWnd) {
+        DestroyWindow(m_hOffscreenWnd);
+        m_hOffscreenWnd = nullptr;
+    }
+
+    m_pBits = nullptr;
+    m_bitmapWidth = 0;
+    m_bitmapHeight = 0;
 }
