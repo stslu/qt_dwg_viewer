@@ -3,6 +3,7 @@
 #include <QResizeEvent>
 #include <QWheelEvent>
 #include <QDebug>
+#include <cmath>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -18,9 +19,9 @@ DwgViewerWidget::DwgViewerWidget(QWidget *parent)
     , m_zoomFactor(1.0)
 {
     // Optimisations pour le rendu direct avec HWND
-    setAttribute(Qt::WA_PaintOnScreen, true);
-    setAttribute(Qt::WA_NoSystemBackground, true);
-    setAttribute(Qt::WA_OpaquePaintEvent, true);
+    setAttribute(Qt::WA_PaintOnScreen, true);      // Force direct painting to screen, bypassing Qt's backing store
+    setAttribute(Qt::WA_NoSystemBackground, true);  // Prevents Qt from erasing background, reduces flickering
+    setAttribute(Qt::WA_OpaquePaintEvent, true);    // Widget fills entire area, Qt doesn't need to erase first
     
     // Taille minimale raisonnable
     setMinimumSize(400, 300);
@@ -166,9 +167,22 @@ void DwgViewerWidget::wheelEvent(QWheelEvent *event)
     }
 
     try {
+        // Vérifier qu'il y a au moins une vue
+        if (m_pDevice->numViews() == 0) {
+            QWidget::wheelEvent(event);
+            return;
+        }
+
         // Calculer le facteur de zoom
         double delta = event->angleDelta().y();
         double zoomDelta = delta > 0 ? 1.15 : 1.0 / 1.15;
+        
+        // Protection contre division par zéro (bien qu'improbable)
+        if (std::abs(zoomDelta) < 1e-6) {
+            event->accept();
+            return;
+        }
+        
         m_zoomFactor *= zoomDelta;
 
         // Obtenir la vue active

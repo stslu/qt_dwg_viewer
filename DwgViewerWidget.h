@@ -1,7 +1,7 @@
-#include "OdaCommon.h"
-
 #ifndef DWGVIEWERWIDGET_H
 #define DWGVIEWERWIDGET_H
+
+#include "OdaCommon.h"
 
 #include <QWidget>
 #include "DbDatabase.h"
