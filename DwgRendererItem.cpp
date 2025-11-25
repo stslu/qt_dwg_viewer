@@ -16,6 +16,8 @@
 #include "RxRasterServices.h"
 #include "RxVariantValue.h"
 
+#include <windows.h>
+
 
 DwgRendererItem::DwgRendererItem(OdDbDatabasePtr pDb, QGraphicsItem* parent)
     : QGraphicsObject(parent)
@@ -74,10 +76,113 @@ QRectF DwgRendererItem::boundingRect() const
     return m_cachedBoundingRect;
 }
 
+// bool DwgRendererItem::generateImage(const QSize& size)
+// {
+//     if (m_imageGenerated) {
+//         return true;  // Généré une seule fois
+//     }
+
+//     if (m_pDb.isNull() || size.width() < 1 || size.height() < 1) {
+//         return false;
+//     }
+
+//     qDebug() << "Generating DWG image at size:" << size;
+
+//     try {
+//         // Créer device bitmap
+//         OdGsModulePtr pGsModule = odrxDynamicLinker()->loadModule(m_gsDeviceModuleName);
+//         if (pGsModule.isNull()) {
+//             qWarning() << "Failed to load GS module";
+//             return false;
+//         }
+
+//         OdGsDevicePtr pDevice = pGsModule->createDevice();
+//         if (pDevice.isNull()) {
+//             qWarning() << "Failed to create device";
+//             return false;
+//         }
+
+//         // Configuration
+//         OdRxDictionaryPtr pProps = pDevice->properties();
+//         if (!pProps.isNull()) {
+//             if (pProps->has(OD_T("BitPerPixel")))
+//                 pProps->putAt(OD_T("BitPerPixel"), OdRxVariantValue(OdUInt32(24)));
+//         }
+
+//         pDevice->setBackgroundColor(ODRGB(255, 255, 255));
+
+//         // Contexte
+//         OdGiContextForDbDatabasePtr pGiCtx = OdGiContextForDbDatabase::createObject();
+//         pGiCtx->setDatabase(m_pDb);
+
+//         // Setup layout
+//         OdGsLayoutHelperPtr pHelper = OdDbGsManager::setupActiveLayoutViews(pDevice, pGiCtx);
+
+//         if (pHelper.isNull()) {
+//             qWarning() << "Failed to setup layout helper";
+//             return false;
+//         }
+
+//         // Taille - utilisez une grande résolution pour meilleure qualité au zoom
+//         int renderWidth = size.width() * 2;   // 2x pour meilleure qualité
+//         int renderHeight = size.height() * 2;
+
+//         OdGsDCRect rect(0, renderWidth, renderHeight, 0);
+//         pHelper->onSize(rect);
+
+//         // RENDU
+//         // Essayer d'obtenir le snapshot directement
+//         OdGiRasterImagePtr pRasImg;
+//         pDevice->getSnapShot(pRasImg, rect);
+
+//         if (!pRasImg.isNull()) {
+//             qDebug() << "Raster image obtained, size:" << pRasImg->pixelWidth() << "x" << pRasImg->pixelHeight();
+
+//             // Convertir directement en QImage sans passer par un fichier
+//             int width = (int)pRasImg->pixelWidth();
+//             int height = (int)pRasImg->pixelHeight();
+//             int bpp = (int)pRasImg->colorDepth();
+
+//             if (width > 0 && height > 0) {
+//                 QImage::Format fmt = (bpp == 32) ? QImage::Format_RGB32 : QImage::Format_RGB888;
+//                 m_cachedImage = QImage(width, height, fmt);
+
+//                 OdUInt32 scnLnSize = pRasImg->scanLineSize();
+//                 OdUInt32 bytesPerPixel = (bpp + 7) / 8;
+//                 OdUInt32 rowSize = width * bytesPerPixel;
+
+//                 // Copier les scanlines
+//                 for (int y = 0; y < height; ++y) {
+//                     const OdUInt8* srcLine = pRasImg->scanLines() + y * scnLnSize;
+//                     OdUInt8* dstLine = m_cachedImage.scanLine(y);
+//                     memcpy(dstLine, srcLine, qMin((OdUInt32)m_cachedImage.bytesPerLine(), rowSize));
+//                 }
+
+//                 // RGB -> BGR swap
+//                 m_cachedImage = m_cachedImage.rgbSwapped();
+//                 m_imageGenerated = true;
+//                 qDebug() << "Image generated successfully";
+//                 return true;
+//             }
+//         }
+
+//         qWarning() << "Failed to get snapshot from device";
+
+//         qWarning() << "Failed to export raster image";
+
+//     } catch (const OdError& e) {
+//         qWarning() << "Generation error:" << QString::fromStdWString((const wchar_t*)e.description().c_str());
+//     } catch (...) {
+//         qWarning() << "Unknown generation error";
+//     }
+
+//     return false;
+// }
+
 bool DwgRendererItem::generateImage(const QSize& size)
 {
     if (m_imageGenerated) {
-        return true;  // Généré une seule fois
+        return true;
     }
 
     if (m_pDb.isNull() || size.width() < 1 || size.height() < 1) {
@@ -86,25 +191,74 @@ bool DwgRendererItem::generateImage(const QSize& size)
 
     qDebug() << "Generating DWG image at size:" << size;
 
+    // Variables Windows
+    HWND hTempWnd = nullptr;
+    HDC hTempDC = nullptr;
+    HBITMAP hBitmap = nullptr;
+    HBITMAP hOldBitmap = nullptr;
+    void* pBits = nullptr;
+
     try {
-        // Créer device bitmap
-        OdGsModulePtr pGsModule = odrxDynamicLinker()->loadModule(m_gsDeviceModuleName);
-        if (pGsModule.isNull()) {
-            qWarning() << "Failed to load GS module";
+        int renderWidth = size.width() * 2;
+        int renderHeight = size.height() * 2;
+
+        // Créer une fenêtre temporaire invisible
+        hTempWnd = CreateWindowExW(
+            0, L"STATIC", L"TeighaTemp",
+            WS_POPUP,
+            0, 0, renderWidth, renderHeight,
+            nullptr, nullptr, GetModuleHandle(nullptr), nullptr
+            );
+
+        if (!hTempWnd) {
+            qWarning() << "Failed to create temp window";
             return false;
+        }
+
+        hTempDC = GetDC(hTempWnd);
+        if (!hTempDC) {
+            DestroyWindow(hTempWnd);
+            return false;
+        }
+
+        // Créer DIB
+        BITMAPINFO bmi;
+        ZeroMemory(&bmi, sizeof(BITMAPINFO));
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = renderWidth;
+        bmi.bmiHeader.biHeight = -renderHeight;  // Top-down
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 24;
+        bmi.bmiHeader.biCompression = BI_RGB;
+
+        hBitmap = CreateDIBSection(hTempDC, &bmi, DIB_RGB_COLORS, &pBits, nullptr, 0);
+        if (!hBitmap) {
+            qWarning() << "Failed to create DIB";
+            ReleaseDC(hTempWnd, hTempDC);
+            DestroyWindow(hTempWnd);
+            return false;
+        }
+
+        hOldBitmap = (HBITMAP)SelectObject(hTempDC, hBitmap);
+
+        // Créer device GDI
+        OdGsModulePtr pGsModule = odrxDynamicLinker()->loadModule(OdWinGDIModuleName);
+        if (pGsModule.isNull()) {
+            qWarning() << "Failed to load WinGDI module";
+            throw OdError(eNullPtr);
         }
 
         OdGsDevicePtr pDevice = pGsModule->createDevice();
         if (pDevice.isNull()) {
             qWarning() << "Failed to create device";
-            return false;
+            throw OdError(eNullPtr);
         }
 
-        // Configuration
+        // Configuration avec notre DC
         OdRxDictionaryPtr pProps = pDevice->properties();
         if (!pProps.isNull()) {
-            if (pProps->has(OD_T("BitPerPixel")))
-                pProps->putAt(OD_T("BitPerPixel"), OdRxVariantValue(OdUInt32(24)));
+            pProps->putAt(OD_T("WindowHWND"), OdRxVariantValue((OdIntPtr)hTempWnd));
+            pProps->putAt(OD_T("WindowHDC"), OdRxVariantValue((OdIntPtr)hTempDC));
         }
 
         pDevice->setBackgroundColor(ODRGB(255, 255, 255));
@@ -118,61 +272,57 @@ bool DwgRendererItem::generateImage(const QSize& size)
 
         if (pHelper.isNull()) {
             qWarning() << "Failed to setup layout helper";
-            return false;
+            throw OdError(eNullPtr);
         }
-
-        // Taille - utilisez une grande résolution pour meilleure qualité au zoom
-        int renderWidth = size.width() * 2;   // 2x pour meilleure qualité
-        int renderHeight = size.height() * 2;
 
         OdGsDCRect rect(0, renderWidth, renderHeight, 0);
         pHelper->onSize(rect);
 
         // RENDU
-        // Essayer d'obtenir le snapshot directement
-        OdGiRasterImagePtr pRasImg;
-        pDevice->getSnapShot(pRasImg, rect);
+        qDebug() << "Rendering to DC...";
+        pDevice->update();
+        qDebug() << "Render complete";
 
-        if (!pRasImg.isNull()) {
-            qDebug() << "Raster image obtained, size:" << pRasImg->pixelWidth() << "x" << pRasImg->pixelHeight();
+        // Copier le DIB vers QImage
+        if (pBits) {
+            int stride = ((renderWidth * 3 + 3) & ~3);
+            m_cachedImage = QImage(renderWidth, renderHeight, QImage::Format_RGB888);
 
-            // Convertir directement en QImage sans passer par un fichier
-            int width = (int)pRasImg->pixelWidth();
-            int height = (int)pRasImg->pixelHeight();
-            int bpp = (int)pRasImg->colorDepth();
-
-            if (width > 0 && height > 0) {
-                QImage::Format fmt = (bpp == 32) ? QImage::Format_RGB32 : QImage::Format_RGB888;
-                m_cachedImage = QImage(width, height, fmt);
-
-                OdUInt32 scnLnSize = pRasImg->scanLineSize();
-                OdUInt32 bytesPerPixel = (bpp + 7) / 8;
-                OdUInt32 rowSize = width * bytesPerPixel;
-
-                // Copier les scanlines
-                for (int y = 0; y < height; ++y) {
-                    const OdUInt8* srcLine = pRasImg->scanLines() + y * scnLnSize;
-                    OdUInt8* dstLine = m_cachedImage.scanLine(y);
-                    memcpy(dstLine, srcLine, qMin((OdUInt32)m_cachedImage.bytesPerLine(), rowSize));
-                }
-
-                // RGB -> BGR swap
-                m_cachedImage = m_cachedImage.rgbSwapped();
-                m_imageGenerated = true;
-                qDebug() << "Image generated successfully";
-                return true;
+            for (int y = 0; y < renderHeight; ++y) {
+                const OdUInt8* srcLine = (const OdUInt8*)pBits + y * stride;
+                OdUInt8* dstLine = m_cachedImage.scanLine(y);
+                memcpy(dstLine, srcLine, renderWidth * 3);
             }
+
+            m_cachedImage = m_cachedImage.rgbSwapped();
+
+            // DEBUG
+            QString debugPath = QDir::temp().filePath("debug_teigha2.png");
+            m_cachedImage.save(debugPath);
+            qDebug() << "Debug image saved to:" << debugPath;
+
+            m_imageGenerated = true;
+
+            // Cleanup
+            SelectObject(hTempDC, hOldBitmap);
+            DeleteObject(hBitmap);
+            ReleaseDC(hTempWnd, hTempDC);
+            DestroyWindow(hTempWnd);
+
+            return true;
         }
-
-        qWarning() << "Failed to get snapshot from device";
-
-        qWarning() << "Failed to export raster image";
 
     } catch (const OdError& e) {
         qWarning() << "Generation error:" << QString::fromStdWString((const wchar_t*)e.description().c_str());
     } catch (...) {
         qWarning() << "Unknown generation error";
     }
+
+    // Cleanup en cas d'erreur
+    if (hOldBitmap && hTempDC) SelectObject(hTempDC, hOldBitmap);
+    if (hBitmap) DeleteObject(hBitmap);
+    if (hTempDC && hTempWnd) ReleaseDC(hTempWnd, hTempDC);
+    if (hTempWnd) DestroyWindow(hTempWnd);
 
     return false;
 }
