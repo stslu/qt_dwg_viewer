@@ -35,7 +35,17 @@ void MainWindow::setupUi()
     setMinimumSize(1024, 768);
 
     m_scene = new QGraphicsScene(this);
+
     m_view = new QGraphicsView(m_scene);
+
+    m_view->setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
+    m_view->setResizeAnchor(QGraphicsView::AnchorUnderMouse);
+    m_view->setRenderHint(QPainter::Antialiasing, true);
+    m_view->setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+    //vl : ajouter le zoom avec Ctrl+Molette
+    m_view->setDragMode(QGraphicsView::ScrollHandDrag);
+
 
     // Configuration OpenGL
     QOpenGLWidget* openGlWidget = new QOpenGLWidget();
@@ -98,4 +108,16 @@ void MainWindow::openDwgFile()
     annotation->setBrush(Qt::red);
     annotation->setFont(QFont("Arial", 50, QFont::Bold));
     m_scene->addItem(annotation);
+}
+
+
+void MainWindow::wheelEvent(QWheelEvent* event)
+{
+    if (event->modifiers() & Qt::ControlModifier) {
+        double scaleFactor = event->angleDelta().y() > 0 ? 1.15 : 1.0 / 1.15;
+        m_view->scale(scaleFactor, scaleFactor);
+        event->accept();
+    } else {
+        QMainWindow::wheelEvent(event);
+    }
 }

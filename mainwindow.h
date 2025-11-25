@@ -6,6 +6,7 @@
 #include <QMainWindow>
 #include <QGraphicsView>
 #include <QGraphicsScene>
+#include <QWheelEvent>
 
 // Includes Teigha
 #include "DbDatabase.h"
@@ -20,6 +21,10 @@ public:
 
 private slots:
     void openDwgFile();
+
+protected:
+    void wheelEvent(QWheelEvent* event) override;
+
 
 private:
     void setupUi();
