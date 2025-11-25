@@ -18,10 +18,10 @@ DwgViewerWidget::DwgViewerWidget(QWidget *parent)
     , m_isInitialized(false)
     , m_zoomFactor(1.0)
 {
-    // Optimisations pour le rendu direct avec HWND
-    setAttribute(Qt::WA_PaintOnScreen, true);      // Force direct painting to screen, bypassing Qt's backing store
-    setAttribute(Qt::WA_NoSystemBackground, true);  // Prevents Qt from erasing background, reduces flickering
-    setAttribute(Qt::WA_OpaquePaintEvent, true);    // Widget fills entire area, Qt doesn't need to erase first
+    // Optimisations critiques pour le rendu direct WinGDI avec HWND Windows
+    setAttribute(Qt::WA_PaintOnScreen, true);      // Force direct painting to screen, bypassing Qt's backing store (required for native HWND rendering)
+    setAttribute(Qt::WA_NoSystemBackground, true);  // Prevents Qt from erasing background, reduces flickering with native rendering
+    setAttribute(Qt::WA_OpaquePaintEvent, true);    // Widget fills entire area, Qt doesn't need to erase first (optimization for WinGDI)
     
     // Taille minimale raisonnable
     setMinimumSize(400, 300);
@@ -178,7 +178,8 @@ void DwgViewerWidget::wheelEvent(QWheelEvent *event)
         double zoomDelta = delta > 0 ? 1.15 : 1.0 / 1.15;
         
         // Protection contre division par zéro (bien qu'improbable)
-        if (std::abs(zoomDelta) < 1e-6) {
+        static constexpr double MIN_ZOOM_THRESHOLD = 1e-6;
+        if (std::abs(zoomDelta) < MIN_ZOOM_THRESHOLD) {
             event->accept();
             return;
         }
