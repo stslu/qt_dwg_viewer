@@ -7,6 +7,7 @@
 #include <QMessageBox>
 #include <QOpenGLWidget>
 #include <QSurfaceFormat>
+#include <QGraphicsProxyWidget>
 
 #include "MyServices.h"
 
@@ -100,14 +101,21 @@ void MainWindow::openDwgFile()
         return;
     }
 
-    DwgRendererItem* dwgItem = new DwgRendererItem(m_pDb);
-    m_scene->addItem(dwgItem);
+    // Créer le widget viewer
+    DwgViewerWidget* viewerWidget = new DwgViewerWidget();
+    viewerWidget->setDatabase(m_pDb);
+    viewerWidget->resize(800, 600);
 
-    QGraphicsSimpleTextItem* annotation = new QGraphicsSimpleTextItem("Annotation Qt");
-    annotation->setPos(0, 0);
-    annotation->setBrush(Qt::red);
-    annotation->setFont(QFont("Arial", 50, QFont::Bold));
-    m_scene->addItem(annotation);
+    // Intégrer dans la scène via proxy
+    QGraphicsProxyWidget* proxy = m_scene->addWidget(viewerWidget);
+    proxy->setPos(0, 0);
+    
+    // Configuration du proxy
+    proxy->setFlag(QGraphicsItem::ItemIsMovable, false);
+    proxy->setFlag(QGraphicsItem::ItemIsSelectable, true);
+
+    // Adapter la vue pour afficher le proxy
+    m_view->fitInView(proxy, Qt::KeepAspectRatio);
 }
 
 
