@@ -11,6 +11,9 @@
 // Includes Teigha
 #include "DbDatabase.h"
 
+// Includes du projet
+#include "DwgViewerWidget.h"
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT

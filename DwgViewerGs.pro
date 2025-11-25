@@ -7,11 +7,13 @@ SOURCES += \
     main.cpp \
     mainwindow.cpp \
     DwgRendererItem.cpp \
+    DwgViewerWidget.cpp \
     MyServices.cpp
 
 HEADERS += \
     mainwindow.h \
     DwgRendererItem.h \
+    DwgViewerWidget.h \
     MyServices.h
 
 # ===================================================================
